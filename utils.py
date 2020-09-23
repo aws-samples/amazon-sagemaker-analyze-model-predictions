@@ -78,7 +78,7 @@ def show_images_diff(image, adv_image, adv_label, signnames, index):
     plt.tight_layout()
     plt.show()
 
-    imageio.imwrite(f'adverserial_examples/{index}.png', adv_image)
+    imageio.imwrite(f'adversarial_examples/{index}.png', adv_image)
 
 
 def plot_saliency_map(saliency_map, image, predicted_class, probability, signnames):
