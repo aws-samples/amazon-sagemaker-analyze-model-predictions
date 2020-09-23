@@ -9,16 +9,13 @@ import cv2
 import imageio
 
 def get_dataloader():
-    
     val_transform = transforms.Compose([
-                                        transforms.Resize((128, 128)),
-                                        transforms.ToTensor(),
-                                        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-                                        ])
+        transforms.Resize((128, 128)),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+    ])
     dataset = datasets.ImageFolder("GTSRB/Final_Test/", val_transform)
-    val_dataloader = torch.utils.data.DataLoader( dataset, 
-                                                  batch_size=1,
-                                                  shuffle=True)
+    val_dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True)
 
     return val_dataloader
 
@@ -29,7 +26,7 @@ def load_model():
     #load model
     model = models.resnet18()
 
-    #traffic sign dataset has 43 classes   
+    #traffic sign dataset has 43 classes
     nfeatures = model.fc.in_features
     model.fc = nn.Linear(nfeatures, 43)
 
@@ -38,7 +35,7 @@ def load_model():
 
     for param in model.parameters():
         param.requires_grad = False
-        
+
     model.to(device).eval()
     return model
 
@@ -57,7 +54,7 @@ def show_images_diff(image, adv_image, adv_label, signnames, index):
     image = (image * std) + mean
     image = image * 255.0
     image = np.clip(image, 0, 255).astype(np.uint8)
-        
+
     plt.figure(figsize=(10, 15))
 
     plt.subplot(131)
@@ -66,7 +63,7 @@ def show_images_diff(image, adv_image, adv_label, signnames, index):
     plt.axis('off')
 
     plt.subplot(132)
-    plt.title('Model prediction: ' + signnames[adv_label])
+    plt.title(f'Model prediction: {signnames[adv_label]}')
     plt.imshow(adv_image)
     plt.axis('off')
 
@@ -80,16 +77,15 @@ def show_images_diff(image, adv_image, adv_label, signnames, index):
     plt.axis('off')
     plt.tight_layout()
     plt.show()
-  
-    imageio.imwrite("adverserial_examples/" + str(index) + ".png", adv_image)
-    
-import matplotlib.pyplot as plt
 
-def plot_saliency_map(saliency_map, image, predicted_class, propability, signnames): 
-    
+    imageio.imwrite(f'adverserial_examples/{index}.png', adv_image)
+
+
+def plot_saliency_map(saliency_map, image, predicted_class, probability, signnames):
+
     #clear matplotlib figure
     plt.clf()
-    
+
     #revert normalization
     mean = [[[0.485]], [[0.456]], [[0.406]]]
     std = [[[0.229]], [[0.224]], [[0.225]]]
@@ -97,26 +93,30 @@ def plot_saliency_map(saliency_map, image, predicted_class, propability, signnam
 
     #transpose image: color channel in last dimension
     image = image.transpose(1, 2, 0)
-    image = (image * 255).astype(np.uint8) 
-    
+    image = (image * 255).astype(np.uint8)
+
     #create heatmap: we multiply it with -1 because we use
     # matplotlib to plot output results which inverts the colormap
     saliency_map = - saliency_map * 255
     saliency_map = saliency_map.astype(np.uint8)
     heatmap = cv2.applyColorMap(saliency_map, cv2.COLORMAP_JET)
-    
+
     #overlay original image with heatmap
     output_image = heatmap.astype(np.float32) + image.astype(np.float32)
-    
+
     #normalize
     output_image = output_image / np.max(output_image)
-    
+
     #plot
-    fig, (ax0, ax1) = plt.subplots(ncols=2, figsize=(10, 5))    
+    fig, (ax0, ax1) = plt.subplots(ncols=2, figsize=(10, 5))
     ax0.imshow(image)
     ax1.imshow(output_image)
     ax0.set_axis_off()
     ax1.set_axis_off()
-    ax0.set_title("Input image")
-    ax1.set_title("Predicted class " + str(predicted_class) + " (" + signnames[predicted_class] + ") " + "with propability " + propability + "%")
+    ax0.set_title('Input image')
+    ax1.set_title('Predicted class {} ({}) with probability {}%'.format(
+        predicted_class,
+        signnames[predicted_class],
+        probability,
+    ))
     plt.show()
