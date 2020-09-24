@@ -6,7 +6,6 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import torch.utils.data.dataloader as Data
 import torch.nn as nn
 from torchvision import datasets, models, transforms
 
@@ -21,7 +20,7 @@ def get_dataloader():
         transforms.ToTensor(),
         transforms.Normalize(image_norm_mean, image_norm_stddev),
     ])
-    dataset = datasets.ImageFolder("GTSRB/Final_Test/", val_transform)
+    dataset = datasets.ImageFolder('GTSRB/Final_Test/', val_transform)
     val_dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True)
 
     return val_dataloader
@@ -138,36 +137,66 @@ def show_images_diff(image, adv_image, adv_label=None, class_names=None, cmap=No
     plt.show()
 
 
-def plot_saliency_map(saliency_map, image, predicted_class, probability, signnames):
+def plot_saliency_map(
+    saliency_map,
+    image,
+    predicted_class=None,
+    class_names=None,
+    confidence=None,
+    cmap=plt.cm.plasma,
+    alpha=0.5,
+):
+    """Plot an image classification result with saliency map
 
-    #clear matplotlib figure
-    plt.clf()
-
+    Parameters
+    ----------
+    saliency_map :
+        A *normalized* (range 0-1.0) importance/saliency map matching image height and width, but with no
+        channel dimension.
+    image :
+        An image with leading channel dimension, normalized values (mean + std).
+        TODO: Parameterize the normalization rather than hard-coding?
+    predicted_class : Any (Optional)
+        If supplied, the saliency overlay plot will be titled to indicate which class was detected.
+    class_names : Mapping[Any, Any] (Optional)
+        If supplied as well as predicted_class, the saliency overlay plot title will *also* be annotated with
+        the "name" looked up from the raw predicted_class label.
+    confidence : float (Optional)
+        If supplied as well as predicted_class, the saliency overlay plot title will also be annotated with
+        the confidence score. Should be in 0-1.0 range, will be displayed as percentage.
+    cmap : matplotlib.pyplot.colors.ColorMap (Optional)
+        A PyPlot colormap to apply for the saliency map. Defaults to plt.cm.plasma
+    alpha : float (Optional)
+        Opacity of the saliency heatmap to show in the overlay image. Defaults to 0.5
+    """
     # Revert image normalization
-    image = tensor_to_imgarray(image)
+    image = tensor_to_imgarray(image, floating_point=True)
 
-    #create heatmap: we multiply it with -1 because we use
-    # matplotlib to plot output results which inverts the colormap
-    saliency_map = - saliency_map * 255
-    saliency_map = saliency_map.astype(np.uint8)
-    heatmap = cv2.applyColorMap(saliency_map, cv2.COLORMAP_JET)
+    # Given the saliency map has already been normalized to 0-1, we can apply pyplot colormap as below:
+    # (Otherwise see mpl.colors.Normalize and plt.cm.ScalarMappable(norm=norm, cmap=cmap))
+    heatmap = cmap(saliency_map)
+    heatmap = heatmap[:, :, :-1]  # Trim off the alpha channel (always 1.0 anyway for typical cmaps)
 
-    #overlay original image with heatmap
-    output_image = heatmap.astype(np.float32) + image.astype(np.float32)
+    # Blend image with heatmap:
+    combined_image = alpha * heatmap + (1-alpha) * image
 
-    #normalize
-    output_image = output_image / np.max(output_image)
-
-    #plot
-    fig, (ax0, ax1) = plt.subplots(ncols=2, figsize=(10, 5))
+    # Plot
+    fig, (ax0, ax1, ax2) = plt.subplots(ncols=3, figsize=(12, 4))
     ax0.imshow(image)
-    ax1.imshow(output_image)
     ax0.set_axis_off()
+    ax0.set_title("Input image")
+    ax1.imshow(combined_image)
     ax1.set_axis_off()
-    ax0.set_title('Input image')
-    ax1.set_title('Predicted class {} ({}) with probability {}%'.format(
-        predicted_class,
-        signnames[predicted_class],
-        probability,
-    ))
+    if predicted_class is None:
+        ax1.set_title("Saliency overlay")
+    else:
+        ax1.set_title("Predicted '{}'{}{}".format(
+            str(predicted_class),
+            f" ({class_names[predicted_class]})" if class_names is not None else "",
+            f", {confidence * 100:.1f}%" if confidence is not None else "",
+        ))
+    ax2.imshow(heatmap)
+    ax2.set_axis_off()
+    ax2.set_title("Saliency heatmap")
+    plt.tight_layout()
     plt.show()
