@@ -2,7 +2,7 @@
 import os
 
 # External Dependencies:
-import cv2
+from IPython.display import display, HTML
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -12,6 +12,28 @@ from torchvision import datasets, models, transforms
 # Configuration:
 image_norm_mean = [0.485, 0.456, 0.406]
 image_norm_stddev = [0.229, 0.224, 0.225]
+
+
+def create_circular_mask(h, w, center=None, radius=None):
+    """Create a boolean mask selecting a circular region (e.g. in an image)
+
+    Sourced from the following StackOverflow post, with tweaks:
+    https://stackoverflow.com/a/44874588/13352657
+    """
+    if center is None: # use the middle of the image
+        center = (int(w/2), int(h/2))
+    elif np.all(np.array(center) <= 1.): # Convert fractional to absolute
+        center = (np.array((w, h)) * center).astype(int)
+    if radius is None: # use the smallest distance between the center and image walls
+        radius = min(center[0], center[1], w-center[0], h-center[1])
+    elif radius < 1.: # Convert fractional to absolute
+        radius = min(w, h) * radius
+
+    Y, X = np.ogrid[:h, :w]
+    dist_from_center = np.sqrt((X - center[0])**2 + (Y-center[1])**2)
+
+    mask = dist_from_center <= radius
+    return mask
 
 
 def get_dataloader():
@@ -145,6 +167,9 @@ def plot_saliency_map(
     confidence=None,
     cmap=plt.cm.plasma,
     alpha=0.5,
+    interest_center=(0.5, 0.5),
+    interest_radius=0.4,
+    max_bg_saliency_thresh=0.85,
 ):
     """Plot an image classification result with saliency map
 
@@ -168,6 +193,17 @@ def plot_saliency_map(
         A PyPlot colormap to apply for the saliency map. Defaults to plt.cm.plasma
     alpha : float (Optional)
         Opacity of the saliency heatmap to show in the overlay image. Defaults to 0.5
+    interest_center : Tuple[float] (Optional)
+        Relative (w, h) center of expected interest area in image (0.5,0.5 = middle by default). Used only
+        when interest_radius is not None
+    interest_radius : float (Optional)
+        Relative radius of interest circle in image (0.4 for 80% diameter by default). When this parameter is
+        not explicitly set to None, draw a 'circle of interest' on the plots and calculate the maximum and
+        average saliency of points *outside* this region - to check for unexpected attention focus away from
+        the subject of the image.
+    max_bg_saliency_thresh : float (Optional)
+        Display a warning box in the notebook when the maximum saliency *outside* the circle of interest is
+        >= this value.
     """
     # Revert image normalization
     image = tensor_to_imgarray(image, floating_point=True)
@@ -199,4 +235,37 @@ def plot_saliency_map(
     ax2.set_axis_off()
     ax2.set_title("Saliency heatmap")
     plt.tight_layout()
+
+    # If required, plot interest circles and calculate background saliency metrics:
+    if interest_radius is not None:
+        h = heatmap.shape[0]
+        w = heatmap.shape[1]
+        bg_mask = ~create_circular_mask(h, w, center=interest_center, radius=interest_radius)
+        bg_saliency = bg_mask * saliency_map
+        max_bg_saliency = np.max(bg_saliency)
+        print(f"Max bg_saliency {max_bg_saliency}, average bg_saliency {np.mean(bg_saliency)}")
+
+        wh = np.array((w, h))
+        # Unfortunately you can't re-use a mpl 'artist' between plots, and there's no copy method! Ugh
+        plt_circle0 = plt.Circle(
+            wh * interest_center, np.min(wh) * interest_radius, color='white', fill=False,
+        )
+        ax0.add_artist(plt_circle0)
+        plt_circle1 = plt.Circle(
+            wh * interest_center, np.min(wh) * interest_radius, color='white', fill=False,
+        )
+        ax1.add_artist(plt_circle1)
+        plt_circle2 = plt.Circle(
+            wh * interest_center, np.min(wh) * interest_radius, color='white', fill=False,
+        )
+        ax2.add_artist(plt_circle2)
+
     plt.show()
+
+    if interest_radius is not None and max_bg_saliency >= max_bg_saliency_thresh:
+        display(HTML('\n'.join((
+            f'<div class="alert alert-warning">',
+            'High saliency outside region of interest: prediction may be attending to unreliable background',
+            'context',
+            '</div>',
+        ))))
