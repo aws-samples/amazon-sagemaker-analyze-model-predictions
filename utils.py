@@ -1,23 +1,75 @@
-import numpy as np
+# Python Built-Ins:
+import os
+
+# External Dependencies:
+import cv2
 import matplotlib.pyplot as plt
-from torchvision import datasets, models, transforms
+import numpy as np
+import torch
 import torch.utils.data.dataloader as Data
 import torch.nn as nn
-import torch
-import os
-import cv2
-import imageio
+from torchvision import datasets, models, transforms
+
+# Configuration:
+image_norm_mean = [0.485, 0.456, 0.406]
+image_norm_stddev = [0.229, 0.224, 0.225]
+
 
 def get_dataloader():
     val_transform = transforms.Compose([
         transforms.Resize((128, 128)),
         transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        transforms.Normalize(image_norm_mean, image_norm_stddev),
     ])
     dataset = datasets.ImageFolder("GTSRB/Final_Test/", val_transform)
     val_dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True)
 
     return val_dataloader
+
+
+def tensor_to_imgarray(image, floating_point=False):
+    """Convert a normalized tensor or matrix as used by the model into a standard image array
+
+    Parameters
+    ----------
+    image : Union[numpy.ndarray, torch.Tensor]
+        A mean/std-normalized image tensor or matrix in inference format for the model
+    floating_point : bool (Optional)
+        Set True to skip conversion to 0-255 uint8 and return a 0-1.0 float ndarray instead
+    """
+    if torch.is_tensor(image):
+        image = image.cpu().numpy()
+        if len(image.shape) > 3:
+            # Leading batch dimension - take first el only
+            image = image[tuple(0 if dim == 0 else slice(None) for dim in range(len(image.shape)))]
+
+    image_shape = image.shape
+    channeldim = image_shape.index(3)
+    result = image
+
+    # Move channel to correct (trailing) dim if not already:
+    if channeldim < (len(image_shape) - 1):
+        result = np.moveaxis(result, channeldim, -1)
+        image_shape = result.shape
+        channeldim = len(image_shape) - 1
+
+    # Pad mean and stddev constants to image dimensions
+    # TODO: Simplify this when we're consistent in what the image dimensions are!
+    stddev = np.expand_dims(
+        image_norm_stddev,
+        list(range(channeldim)) + list(range(channeldim + 1, len(image_shape)))
+    )
+    mean = np.expand_dims(
+        image_norm_mean,
+        list(range(channeldim)) + list(range(channeldim + 1, len(image_shape)))
+    )
+
+    result = (result * stddev) + mean
+    if floating_point:
+        return np.clip(result, 0., 1.)
+    else:
+        return np.clip(result * 255.0, 0, 255).astype(np.uint8)
+
 
 def load_model():
     #check if GPU is available and set context
@@ -40,45 +92,50 @@ def load_model():
     return model
 
 
-def show_images_diff(image, adv_image, adv_label, signnames, index):
-    mean = [0.485, 0.456, 0.406]
-    std = [0.229, 0.224, 0.225]
+def show_images_diff(image, adv_image, adv_label=None, class_names=None, cmap=None):
+    adv_image = tensor_to_imgarray(adv_image, floating_point=True)
+    image = tensor_to_imgarray(image, floating_point=True)
 
-    adv_image = adv_image.transpose(1, 2, 0)
-    adv_image = (adv_image * std) + mean
-    adv_image = adv_image * 255.0
-    adv_image = np.clip(adv_image, 0, 255).astype(np.uint8)
+    fig, (ax0, ax1, ax2) = plt.subplots(ncols=3, figsize=(12, 4))
 
-    image = image.cpu().numpy()[0,:,:,:]
-    image = image.transpose(1, 2, 0)
-    image = (image * std) + mean
-    image = image * 255.0
-    image = np.clip(image, 0, 255).astype(np.uint8)
+    ax0.imshow(image)
+    ax0.set_title('Original')
+    ax0.set_axis_off()
 
-    plt.figure(figsize=(10, 15))
+    ax1.imshow(adv_image)
+    if adv_label is None:
+        ax1.set_title('Adversarial image')
+    else:
+        ax1.set_title(f'Model prediction: {class_names[adv_label] if class_names else adv_label}')
+    ax1.set_axis_off()
 
-    plt.subplot(131)
-    plt.title('Original')
-    plt.imshow(image)
-    plt.axis('off')
-
-    plt.subplot(132)
-    plt.title(f'Model prediction: {signnames[adv_label]}')
-    plt.imshow(adv_image)
-    plt.axis('off')
-
-    plt.subplot(133)
-    plt.title('Diff')
     difference = adv_image - image
 
-    difference = difference / abs(difference).max() / 2.0 + 0.5
+    # If colormapping, convert RGB to single lightness channel:
+    if cmap is not None and 3 in difference.shape:
+        channeldim = difference.shape.index(3)
+        rgbindices = [
+            tuple(rgb if dim == channeldim else slice(None) for dim in range(len(difference.shape)))
+            for rgb in range(3)
+        ]
+        # RGB->lightness function per PIL docs, but no need to import the lib just for this:
+        # https://pillow.readthedocs.io/en/3.2.x/reference/Image.html#PIL.Image.Image.convert
+        # L = R * 299/1000 + G * 587/1000 + B * 114/1000
+        difference = (
+            difference[rgbindices[0]] * 0.299
+            + difference[rgbindices[1]] * 0.587
+            + difference[rgbindices[2]] * 0.114
+        )
 
-    plt.imshow(difference, cmap=plt.cm.gray)
-    plt.axis('off')
+    # Scale to a symmetric range around max absolute difference (which we print out), and map that to 0-1
+    # for imshow. (When colormapping we could just use vmin/vmax, but this way we keep same path for both).
+    maxdiff = abs(difference).max()
+    difference = difference / (maxdiff * 2.0) + 0.5
+    ax2.imshow(difference, cmap=cmap, vmin=0., vmax=1.)
+    ax2.set_title(f'Diff ({-maxdiff:.4f} to {maxdiff:.4f})')
+    ax2.set_axis_off()
     plt.tight_layout()
     plt.show()
-
-    imageio.imwrite(f'adversarial_examples/{index}.png', adv_image)
 
 
 def plot_saliency_map(saliency_map, image, predicted_class, probability, signnames):
@@ -86,14 +143,8 @@ def plot_saliency_map(saliency_map, image, predicted_class, probability, signnam
     #clear matplotlib figure
     plt.clf()
 
-    #revert normalization
-    mean = [[[0.485]], [[0.456]], [[0.406]]]
-    std = [[[0.229]], [[0.224]], [[0.225]]]
-    image = image * std + mean
-
-    #transpose image: color channel in last dimension
-    image = image.transpose(1, 2, 0)
-    image = (image * 255).astype(np.uint8)
+    # Revert image normalization
+    image = tensor_to_imgarray(image)
 
     #create heatmap: we multiply it with -1 because we use
     # matplotlib to plot output results which inverts the colormap
