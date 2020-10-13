@@ -76,14 +76,15 @@ def tensor_to_imgarray(image, floating_point=False):
 
     # Pad mean and stddev constants to image dimensions
     # TODO: Simplify this when we're consistent in what the image dimensions are!
-    stddev = np.expand_dims(
-        image_norm_stddev,
-        list(range(channeldim)) + list(range(channeldim + 1, len(image_shape)))
-    )
-    mean = np.expand_dims(
-        image_norm_mean,
-        list(range(channeldim)) + list(range(channeldim + 1, len(image_shape)))
-    )
+    # We use a loop here in case some environments use numpy<1.18 when the functionality to accept a tuple of
+    # axes was introduced:
+    stddev = image_norm_stddev
+    mean = image_norm_mean
+    for _ in range(channeldim):
+        stddev = np.expand_dims(stddev, 0)
+        mean = np.expand_dims(mean, 0)
+    for _ in range(channeldim + 1, len(image_shape)):
+        stddev = np.expand_dims(stddev, -1)
 
     result = (result * stddev) + mean
     if floating_point:
