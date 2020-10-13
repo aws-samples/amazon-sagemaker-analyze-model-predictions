@@ -1,0 +1,2 @@
+Pillow
+smdebug==0.5.0
