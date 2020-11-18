@@ -1,9 +1,7 @@
 from __future__ import print_function, division
 import os
 
-os.system('pip install smdebug==0.5.0')
-os.system('pip install Pillow')
-os.system('pip install sagemaker')
+os.system('pip install Pillow sagemaker smdebug==0.5.0')
 
 import argparse
 import torch
