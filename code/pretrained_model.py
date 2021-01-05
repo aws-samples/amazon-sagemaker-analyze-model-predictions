@@ -1,14 +1,19 @@
-from __future__ import print_function, division
+'''SageMaker PyTorch inference container overrides to serve plain ResNet18 model'''
+
+# Python Built-Ins:
+import argparse
+from io import BytesIO
 import os
 
-os.system('pip install Pillow')
-
-import argparse
+# External Dependencies:
+import numpy as np
+from PIL import Image
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torchvision import models
-    
+from torchvision import models, transforms
+
+
 def model_fn(model_dir):
     #create model    
     model = models.resnet18()
@@ -16,33 +21,28 @@ def model_fn(model_dir):
     #traffic sign dataset has 43 classes   
     nfeatures = model.fc.in_features
     model.fc = nn.Linear(nfeatures, 43)
-    
+
     #load model
-    weights = torch.load(model_dir + '/model/model.pt', map_location=lambda storage, loc: storage)
+    weights = torch.load(f'{model_dir}/model/model.pt', map_location=lambda storage, loc: storage)
     model.load_state_dict(weights)
-    
+
     model.eval()
     model.cpu()
 
     return model
 
+
 def transform_fn(model, data, content_type, output_content_type): 
-    
-    from torchvision import datasets, models, transforms
-    import numpy as np
-    from six import BytesIO
-    from PIL import Image
-    import json
-    
-    transform = transforms.Compose([ transforms.Resize((128,128)),
-                                        transforms.ToTensor(),
-                                        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-                                        ])
-    
+    transform = transforms.Compose([
+        transforms.Resize((128,128)),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+    ])
+
     image = np.load(BytesIO(data))
     image = Image.fromarray(image)
     image = transform(image)
- 
+
     image = image.unsqueeze(0)
 
     #forward pass
